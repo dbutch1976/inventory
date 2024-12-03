@@ -1,0 +1,54 @@
+#Gold standard get-vm for distributed or standard switch
+$Datastores = Get-Datastore | select Name, Id
+Get-VM -PipelineVariable vm |
+    ForEach-Object {
+        Get-NetworkAdapter -VM $vm -PipelineVariable vnic |
+    ForEach-Object {
+        [PSCustomObject] @{
+        Name = $vm.Name
+        Powersate = $vm.Powerstate
+        GuestOS = $vm.Guest.OSFullName
+        Cluster = $vm.VMhost.Parent.Name
+        VMHostName = $vm.VMHost.Name
+        IP = ($vm.Guest.Nics | Where-Object {$_.Device.Name -eq $vnic.Name}).IPAddress -join ','
+        MAC = $vnic.MacAddress
+        NetworkName = $vnic.NetworkName
+        Datastore = ($Datastores | where {$_.ID -match ($vmview.Datastore | Select Value).Value} | Select Name).Name        
+        NumCPU = $vm.NumCPU
+        MEMGB = [Math]::Round(($vm.MemoryGB),2)
+        DiskGB = [Math]::Round($vm.ProvisionedSpaceGB,2)
+        VLanID = & {
+            if ($vnic.NetworkName) {
+                Get-VirtualPortGroup -Name $vnic.NetworkName -VM $vm |
+                ForEach-Object -Process {
+                    if ($_ -is [VMware.VimAutomation.ViCore.Impl.V1.Host.Networking.DistributedPortGroupImpl]) {
+                        if ($_.ExtensionData.Config.DefaultPortConfig.Vlan -is [VMware.Vim.VmwareDistributedVirtualSwitchPvlanSpec]) {
+                            $_.ExtensionData.Config.DefaultPortConfig.Vlan.PvlanId
+                        } elseif ($_.ExtensionData.Config.DefaultPortConfig.Vlan -is [VMware.Vim.VmwareDistributedVirtualSwitchVlanSpec]) {
+                            if ($_.ExtensionData.Config.DefaultPortConfig.Vlan.VlanId -is [VMware.Vim.NumericRange[]]) {
+                                [string]::Join(',', ($_.ExtensionData.Config.DefaultPortConfig.Vlan.VlanId | ForEach-Object {"$($_.Start)-$($_.End)"}))
+                            } else {
+                                $_.ExtensionData.Config.DefaultPortConfig.Vlan.VlanId
+                            }
+                        }
+                    }
+                    else {
+                        $_.VlanId
+                    }
+                }
+            }
+        }
+        NicType = $vnic.Type
+        Notes = $vm.Notes
+        LastActiveDate = if ($Vm.PowerState -eq "PoweredOn") {
+            "ACTIVE"
+            }
+            else {
+            $vm.ExtensionData.Storage.Timestamp
+            }
+        }
+    }
+} #| Export-CSV C:\output\NH1_POD3_Inventory\Report11282024\NDH1_POD3-VMs.csv -NoTypeinformation
+
+
+    
